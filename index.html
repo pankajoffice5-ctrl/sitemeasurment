@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Site Manager</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        :root { --primary: #007bff; --tr: #dc3545; --dark: #121212; --gray: #2a2a2a; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            margin: 0; background: #1a1a1a; color: white; 
+            height: 100vh; display: flex; flex-direction: column; overflow: hidden; 
+        }
+
+        /* Top Room Navigation - Larger Tabs for Mobile */
+        .room-nav { 
+            display: flex; background: #000; padding: 8px; gap: 8px; 
+            border-bottom: 2px solid #333; 
+        }
+        .room-tab {
+            flex: 1; padding: 15px 5px; text-align: center;
+            font-size: 12px; font-weight: 800; border-radius: 8px; cursor: pointer;
+            background: var(--gray); border: 1px solid #444; color: #888;
+            line-height: 1.2;
+        }
+        .room-tab.active { background: var(--tr); color: white; border-color: #fff; }
+
+        /* Secondary Nav - Color Picker & Room Label */
+        .top-bar { 
+            padding: 10px 15px; background: var(--dark); 
+            display: flex; justify-content: space-between; align-items: center; 
+        }
+        .room-label { font-size: 14px; font-weight: bold; letter-spacing: 1px; color: #eee; }
+
+        /* Drawing Area */
+        #viewport { 
+            flex: 1; overflow: auto; position: relative; background: #333;
+            display: flex; align-items: flex-start; justify-content: flex-start;
+        }
+        #workspace { position: relative; transform-origin: 0 0; background: white; }
+        #svg-layer { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            touch-action: none; z-index: 10; 
+        }
+        canvas { display: block; }
+
+        /* Mobile Zoom Controls (Floating) */
+        .zoom-ctrl { 
+            position: fixed; right: 15px; bottom: 120px; 
+            display: flex; flex-direction: column; gap: 12px; z-index: 30; 
+        }
+        .float-btn {
+            width: 55px; height: 55px; border-radius: 50%; border: none; 
+            background: rgba(0,0,0,0.85); color: white; font-size: 28px; 
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.6); border: 1px solid #444;
+        }
+
+        /* Bottom Tool Navigation - Easy Thumb Access */
+        .bottom-nav { 
+            background: var(--dark); display: grid; grid-template-columns: repeat(5, 1fr); 
+            padding: 10px 5px 30px 5px; border-top: 1px solid #333; z-index: 40;
+        }
+        .nav-btn { 
+            background: transparent; border: none; color: #888; 
+            display: flex; flex-direction: column; align-items: center; gap: 6px; 
+            font-size: 11px; font-weight: 600;
+        }
+        .icon-box { 
+            width: 50px; height: 45px; border-radius: 12px; 
+            background: var(--gray); display: flex; align-items: center; 
+            justify-content: center; font-size: 20px; transition: 0.2s;
+        }
+        .nav-btn.active .icon-box { background: var(--primary); color: white; transform: scale(1.1); }
+        .nav-btn.active { color: white; }
+    </style>
+</head>
+<body>
+
+<div class="room-nav">
+    <div class="room-tab active" data-room="TR" onclick="switchRoom('TR')">TRANSFER<br>ROOM</div>
+    <div class="room-tab" data-room="LV" onclick="switchRoom('LV')">LV<br>ROOM</div>
+    <div class="room-tab" data-room="RMU" onclick="switchRoom('RMU')">RMU<br>ROOM</div>
+</div>
+
+<div class="top-bar">
+    <div class="room-label" id="room-display">TRANSFER ROOM</div>
+    <input type="color" id="colorPicker" value="#ff0000" style="width:45px; height:45px; border:none; background:none; cursor:pointer;">
+</div>
+
+<div id="viewport">
+    <div id="workspace">
+        <canvas id="pdf-canvas"></canvas>
+        <svg id="svg-layer" xmlns="http://www.w3.org/2000/svg">
+            <g id="draw-group"></g>
+            <line id="preview-line" x1="0" y1="0" x2="0" y2="0" stroke-width="3" stroke-dasharray="5,5" style="display:none;"/>
+        </svg>
+    </div>
+</div>
+
+<div class="zoom-ctrl">
+    <button class="float-btn" onclick="zoomView(0.4)">+</button>
+    <button class="float-btn" onclick="zoomView(-0.4)">-</button>
+</div>
+
+<nav class="bottom-nav">
+    <button class="nav-btn active" onclick="setTool('pan')" id="btn-pan"><div class="icon-box">✋</div><span>Pan</span></button>
+    <button class="nav-btn" onclick="setTool('line')" id="btn-line"><div class="icon-box">📏</div><span>Line</span></button>
+    <button class="nav-btn" onclick="setTool('text')" id="btn-text"><div class="icon-box">📝</div><span>Note</span></button>
+    <button class="nav-btn" onclick="setTool('delete')" id="btn-delete"><div class="icon-box">🗑️</div><span>Del</span></button>
+    <button class="nav-btn" onclick="undo()"><div class="icon-box">↩️</div><span>Undo</span></button>
+</nav>
+
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    // Your Permanent URL through Proxy
+    const FILE_ID = "1e4UvyV0AXvEdND-_o5nF9pccnr9AM564";
+    const PERMANENT_URL = "https://corsproxy.io/?" + encodeURIComponent(`https://docs.google.com/uc?export=download&id=${FILE_ID}`);
+
+    let currentRoom = 'TR';
+    let tool = 'pan';
+    let scale = 1.0;
+    let isDrawing = false;
+    let startPt = { x: 0, y: 0 };
+
+    let roomData = JSON.parse(localStorage.getItem('mobile_room_data')) || {
+        'TR': { name: 'TRANSFER ROOM', svg: '' },
+        'LV': { name: 'LV ROOM', svg: '' },
+        'RMU': { name: 'RMU ROOM', svg: '' }
+    };
+
+    function switchRoom(id) {
+        roomData[currentRoom].svg = document.getElementById('draw-group').innerHTML;
+        currentRoom = id;
+        document.querySelectorAll('.room-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`[data-room="${id}"]`).classList.add('active');
+        document.getElementById('room-display').innerText = roomData[id].name;
+        document.getElementById('draw-group').innerHTML = roomData[id].svg || '';
+        
+        Array.from(document.getElementById('draw-group').children).forEach(attachItemEvents);
+        setTool('pan');
+    }
+
+    async function loadPDF() {
+        try {
+            const loadingTask = pdfjsLib.getDocument(PERMANENT_URL);
+            const pdf = await loadingTask.promise;
+            const page = await pdf.getPage(1);
+            
+            // Render at high resolution for clear mobile viewing
+            const viewport = page.getViewport({scale: 2.5});
+            const canvas = document.getElementById('pdf-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            document.getElementById('workspace').style.width = viewport.width + 'px';
+            document.getElementById('workspace').style.height = viewport.height + 'px';
+
+            await page.render({canvasContext: ctx, viewport: viewport}).promise;
+        } catch (e) {
+            alert("Connection error. Please refresh or check file sharing.");
+        }
+    }
+
+    function setTool(t) {
+        tool = (tool === t && t !== 'pan') ? 'pan' : t;
+        document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById('btn-' + tool).classList.add('active');
+        
+        // Disable scrolling the viewport when drawing
+        document.getElementById('svg-layer').style.pointerEvents = (tool === 'pan') ? 'none' : 'auto';
+        document.getElementById('viewport').style.overflow = (tool === 'pan') ? 'auto' : 'hidden';
+    }
+
+    function getCoords(e) {
+        const rect = document.getElementById('svg-layer').getBoundingClientRect();
+        // Handle both touch and mouse
+        const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+        const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+        return { 
+            x: (clientX - rect.left) / scale, 
+            y: (clientY - rect.top) / scale 
+        };
+    }
+
+    // Pointer events handle both Mouse and Touch natively
+    const svg = document.getElementById('svg-layer');
+    svg.onpointerdown = (e) => {
+        if (tool === 'pan' || tool === 'delete') return;
+        svg.setPointerCapture(e.pointerId);
+        const p = getCoords(e);
+        if (tool === 'line') {
+            isDrawing = true; startPt = p;
+            const pl = document.getElementById('preview-line');
+            pl.setAttribute('x1', p.x); pl.setAttribute('y1', p.y);
+            pl.setAttribute('stroke', document.getElementById('colorPicker').value);
+            pl.style.display = 'block';
+        } else if (tool === 'text') {
+            const val = prompt("Note:");
+            if (val) addText(val, p.x, p.y);
+        }
+    };
+
+    svg.onpointermove = (e) => {
+        if (!isDrawing) return;
+        const p = getCoords(e);
+        const pl = document.getElementById('preview-line');
+        pl.setAttribute('x2', p.x); pl.setAttribute('y2', p.y);
+    };
+
+    svg.onpointerup = (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        document.getElementById('preview-line').style.display = 'none';
+        const p = getCoords(e);
+        
+        if (Math.hypot(p.x - startPt.x, p.y - startPt.y) > 3) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", startPt.x); line.setAttribute("y1", startPt.y);
+            line.setAttribute("x2", p.x); line.setAttribute("y2", p.y);
+            line.setAttribute("stroke", document.getElementById('colorPicker').value);
+            line.setAttribute("stroke-width", 5); line.setAttribute("stroke-linecap", "round");
+            attachItemEvents(line);
+            document.getElementById('draw-group').appendChild(line);
+            saveToStorage();
+        }
+    };
+
+    function addText(val, x, y) {
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", x); text.setAttribute("y", y);
+        text.setAttribute("fill", document.getElementById('colorPicker').value);
+        text.setAttribute("font-size", "24"); text.setAttribute("font-weight", "bold");
+        text.textContent = val;
+        attachItemEvents(text);
+        document.getElementById('draw-group').appendChild(text);
+        saveToStorage();
+    }
+
+    function attachItemEvents(el) {
+        el.onclick = () => { if (tool === 'delete') { el.remove(); saveToStorage(); } }
+    }
+
+    function zoomView(delta) {
+        scale = Math.max(0.2, Math.min(4, scale + delta));
+        document.getElementById('workspace').style.transform = `scale(${scale})`;
+    }
+
+    function undo() { 
+        const dg = document.getElementById('draw-group');
+        if (dg.lastChild) { dg.removeChild(dg.lastChild); saveToStorage(); } 
+    }
+
+    function saveToStorage() {
+        roomData[currentRoom].svg = document.getElementById('draw-group').innerHTML;
+        localStorage.setItem('mobile_room_data', JSON.stringify(roomData));
+    }
+
+    window.onload = () => {
+        loadPDF();
+        switchRoom('TR');
+    };
+</script>
+</body>
+</html>
