@@ -74,7 +74,7 @@ canvas{display:block;}
 <button class="nav-btn active" onclick="setTool('pan')" id="btn-pan"><div class="icon-box">✋</div><span>Pan</span></button>
 <button class="nav-btn" onclick="setTool('line')" id="btn-line"><div class="icon-box">📏</div><span>Line</span></button>
 <button class="nav-btn" onclick="setTool('text')" id="btn-text"><div class="icon-box">📝</div><span>Note</span></button>
-<button class="nav-btn" onclick="deleteSelected()" id="btn-delete"><div class="icon-box">🗑️</div><span>Del</span></button>
+<button class="nav-btn" onclick="setTool('delete')" id="btn-delete"><div class="icon-box">🗑️</div><span>Del</span></button>
 <button class="nav-btn" onclick="undo()"><div class="icon-box">↩️</div><span>Undo</span></button>
 </nav>
 
@@ -159,7 +159,7 @@ await page.render({canvasContext:ctx,viewport}).promise;
 function setTool(t){
 tool = (tool===t && t!=='pan')?'pan':t;
 document.querySelectorAll('.nav-btn').forEach(btn=>btn.classList.remove('active'));
-document.getElementById('btn-'+tool).classList.add('active');
+document.getElementById('btn-'+t).classList.add('active');
 svgLayer.style.pointerEvents = (tool==='pan') ? 'none' : 'auto';
 document.getElementById('viewport').style.overflow = (tool==='pan')?'auto':'hidden';
 }
@@ -175,7 +175,6 @@ return { x:(clientX-rect.left)/scale, y:(clientY-rect.top)/scale };
 /* ---------- Drawing ---------- */
 svgLayer.onpointerdown=e=>{
 if(tool==='pan') return;
-
 const p = getCoords(e);
 if(tool==='line'){
 isDrawing=true;
@@ -230,14 +229,18 @@ drawGroup.appendChild(text);
 saveToStorage();
 }
 
-/* ---------- Attach Events for Delete ---------- */
-function attachItemEvents(el){
+/* ---------- Attach click events for delete ---------- */
+function attachItemEvents(){
+drawGroup.querySelectorAll("line,text").forEach(el=>{
 el.onclick = e=>{
-if(tool==='delete'){ el.remove(); saveToStorage(); }
+e.stopPropagation();
+selectedElement = el;
+if(tool==='delete'){ el.remove(); selectedElement=null; saveToStorage(); }
 };
+});
 }
 
-/* ---------- Delete Selected ---------- */
+/* ---------- Delete button ---------- */
 function deleteSelected(){
 if(selectedElement){
 selectedElement.remove();
@@ -256,8 +259,10 @@ workspace.style.transform=`scale(${scale})`;
 
 /* ---------- Undo ---------- */
 function undo(){
-const dg=drawGroup;
-if(dg.lastChild){ dg.removeChild(dg.lastChild); saveToStorage(); }
+if(drawGroup.lastChild){
+drawGroup.removeChild(drawGroup.lastChild);
+saveToStorage();
+}
 }
 
 /* ---------- Save ---------- */
