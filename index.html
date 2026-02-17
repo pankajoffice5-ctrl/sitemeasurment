@@ -1,275 +1,191 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mobile Site Manager</title>
-
-<!-- PDF.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-
-<!-- Firebase -->
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drawing Cloud App</title>
 
 <style>
-body{margin:0;background:#1a1a1a;color:white;font-family:sans-serif;}
-.room-nav{display:flex;background:#000;padding:6px;}
-.room-tab{flex:1;padding:12px;text-align:center;background:#333;color:#aaa;cursor:pointer;}
-.room-tab.active{background:#dc3545;color:white;}
-
-#workspace{position:relative;background:white;transform-origin:0 0;}
-#viewport{height:70vh;overflow:auto;background:#333;}
-#svg-layer{position:absolute;top:0;left:0;width:100%;height:100%;}
-
-.bottom-nav{display:flex;background:#111;}
-.bottom-nav button{flex:1;padding:12px;border:none;background:#222;color:white;}
-
-.zoom-ctrl{position:fixed;right:10px;bottom:100px;}
+body{margin:0;font-family:Arial}
+#toolbar{
+  background:#333;color:#fff;padding:8px;
+  display:flex;gap:6px;flex-wrap:wrap
+}
+button{padding:6px 10px}
+svg{width:100%;height:90vh;background:#f5f5f5;touch-action:none}
 </style>
-</head>
 
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+
+</head>
 <body>
 
-<div class="room-nav">
-<div class="room-tab active" data-room="TR" onclick="switchRoom('TR')">TRANSFER</div>
-<div class="room-tab" data-room="LV" onclick="switchRoom('LV')">LV</div>
-<div class="room-tab" data-room="RMU" onclick="switchRoom('RMU')">RMU</div>
+<div id="toolbar">
+<button onclick="setTool('line')">Line</button>
+<button onclick="setTool('text')">Text</button>
+<button onclick="setTool('pan')">Pan</button>
+<button onclick="deleteSelected()">Delete</button>
 </div>
 
-<div style="padding:8px;background:#222">
-Room: <span id="room-display">TRANSFER ROOM</span>
-<input type="color" id="colorPicker" value="#ff0000">
-</div>
-
-<div id="viewport">
-<div id="workspace">
-<canvas id="pdf-canvas"></canvas>
-<svg id="svg-layer">
-<g id="draw-group"></g>
-<line id="preview-line" stroke-width="3"
-stroke-dasharray="5,5" style="display:none;"></line>
+<svg id="svgCanvas">
+  <g id="drawGroup"></g>
 </svg>
-</div>
-</div>
-
-<div class="zoom-ctrl">
-<button onclick="zoomView(0.4)">+</button>
-<button onclick="zoomView(-0.4)">-</button>
-</div>
-
-<div class="bottom-nav">
-<button onclick="setTool('pan')" id="btn-pan">Pan</button>
-<button onclick="setTool('line')" id="btn-line">Line</button>
-<button onclick="setTool('text')" id="btn-text">Text</button>
-<button onclick="setTool('delete')" id="btn-delete">Delete</button>
-<button onclick="undo()">Undo</button>
-</div>
 
 <script>
-/* ---------- Firebase ---------- */
+// ---------- Firebase Config ----------
 const firebaseConfig = {
-apiKey: "AIzaSyBdiUNdzPgK67dfJC_FKR2dmT2NO3sKdmo",
-authDomain: "project-e3d2941a-89ae-42ac-b6f.firebaseapp.com",
-projectId: "project-e3d2941a-89ae-42ac-b6f",
-storageBucket: "project-e3d2941a-89ae-42ac-b6f.firebasestorage.app",
-messagingSenderId: "780017280635",
-appId: "1:780017280635:web:f93c7b1ed903a1b512a4de"
+  apiKey: "AIzaSyBdiUNdzPgK67dfJC_FKR2dmT2NO3sKdmo",
+  authDomain: "project-e3d2941a-89ae-42ac-b6f.firebaseapp.com",
+  projectId: "project-e3d2941a-89ae-42ac-b6f",
+  storageBucket: "project-e3d2941a-89ae-42ac-b6f.firebasestorage.app",
+  messagingSenderId: "780017280635",
+  appId: "1:780017280635:web:f93c7b1ed903a1b512a4de"
 };
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-/* -------------------------------- */
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+// ---------- Variables ----------
+const svg = document.getElementById("svgCanvas");
+const drawGroup = document.getElementById("drawGroup");
 
-const LOCAL_PDF_PATH = encodeURIComponent("LV room.pdf");
+let tool = "pan";
+let drawing = false;
+let line;
+let selectedElement = null;
 
-let currentRoom='TR';
-let tool='pan';
-let scale=1;
-let isDrawing=false;
-let startPt={};
-let appLoaded=false;
-
-const svgLayer=document.getElementById("svg-layer");
-const drawGroup=document.getElementById("draw-group");
-const previewLine=document.getElementById("preview-line");
-const workspace=document.getElementById("workspace");
-const colorPicker=document.getElementById("colorPicker");
-
-let roomData = JSON.parse(localStorage.getItem('offline_room_data')) || {
-TR:{name:'TRANSFER ROOM',svg:''},
-LV:{name:'LV ROOM',svg:''},
-RMU:{name:'RMU ROOM',svg:''}
-};
-
-/* -------- Switch room -------- */
-function switchRoom(id){
-
-if(appLoaded) saveToStorage();
-
-currentRoom=id;
-
-document.querySelectorAll('.room-tab')
-.forEach(t=>t.classList.remove('active'));
-document.querySelector(`[data-room="${id}"]`)
-.classList.add('active');
-
-document.getElementById("room-display").innerText =
-roomData[id].name;
-
-db.collection("rooms").doc(id).get().then(doc=>{
-if(doc.exists){
-drawGroup.innerHTML = doc.data().svg || '';
-}else{
-drawGroup.innerHTML = roomData[id].svg || '';
+// ---------- Tool ----------
+function setTool(t){
+    tool = t;
 }
+
+// ---------- Select Element ----------
+function selectElement(el){
+    if(selectedElement && selectedElement.tagName==="line"){
+        selectedElement.setAttribute("stroke","black");
+    }
+    selectedElement = el;
+
+    if(el.tagName==="line"){
+        el.setAttribute("stroke","red");
+    }
+}
+
+// ---------- Delete ----------
+function deleteSelected(){
+    if(selectedElement){
+        selectedElement.remove();
+        selectedElement = null;
+        saveToCloud();
+    } else {
+        alert("Select element first");
+    }
+}
+
+// ---------- Line Drawing ----------
+svg.addEventListener("pointerdown", e=>{
+    if(tool==="line"){
+        drawing = true;
+
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+        line = document.createElementNS("http://www.w3.org/2000/svg","line");
+        line.setAttribute("x1",p.x);
+        line.setAttribute("y1",p.y);
+        line.setAttribute("x2",p.x);
+        line.setAttribute("y2",p.y);
+        line.setAttribute("stroke","black");
+        line.setAttribute("stroke-width","2");
+
+        line.addEventListener("click",ev=>{
+            ev.stopPropagation();
+            selectElement(line);
+        });
+
+        drawGroup.appendChild(line);
+    }
+
+    if(tool==="text"){
+        const txt = prompt("Enter text");
+        if(!txt) return;
+
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg","text");
+        text.setAttribute("x",p.x);
+        text.setAttribute("y",p.y);
+        text.textContent = txt;
+        text.setAttribute("font-size","16");
+
+        text.addEventListener("click",ev=>{
+            ev.stopPropagation();
+            selectElement(text);
+        });
+
+        drawGroup.appendChild(text);
+        saveToCloud();
+    }
 });
 
-setTool('pan');
-appLoaded=true;
-}
+svg.addEventListener("pointermove", e=>{
+    if(!drawing) return;
 
-/* -------- PDF load -------- */
-async function loadPDF(){
-const pdf=await pdfjsLib.getDocument(LOCAL_PDF_PATH).promise;
-const page=await pdf.getPage(1);
-const viewport=page.getViewport({scale:2.5});
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-const canvas=document.getElementById("pdf-canvas");
-const ctx=canvas.getContext("2d");
-
-canvas.width=viewport.width;
-canvas.height=viewport.height;
-
-workspace.style.width=viewport.width+"px";
-workspace.style.height=viewport.height+"px";
-
-await page.render({canvasContext:ctx,viewport}).promise;
-}
-
-/* -------- Tools -------- */
-function setTool(t){ tool=t; }
-
-function getCoords(e){
-const rect=svgLayer.getBoundingClientRect();
-return {
-x:(e.clientX-rect.left)/scale,
-y:(e.clientY-rect.top)/scale
-};
-}
-
-svgLayer.onpointerdown=e=>{
-if(tool==='delete') return;
-
-const p=getCoords(e);
-
-if(tool==='line'){
-isDrawing=true;
-startPt=p;
-previewLine.setAttribute('x1',p.x);
-previewLine.setAttribute('y1',p.y);
-previewLine.setAttribute('stroke',colorPicker.value);
-previewLine.style.display='block';
-}
-
-if(tool==='text'){
-const val=prompt("Note:");
-if(val) addText(val,p.x,p.y);
-}
-};
-
-svgLayer.onpointermove=e=>{
-if(!isDrawing) return;
-const p=getCoords(e);
-previewLine.setAttribute('x2',p.x);
-previewLine.setAttribute('y2',p.y);
-};
-
-svgLayer.onpointerup=e=>{
-if(!isDrawing) return;
-isDrawing=false;
-previewLine.style.display='none';
-
-const p=getCoords(e);
-
-const line=document.createElementNS(
-"http://www.w3.org/2000/svg","line");
-
-line.setAttribute("x1",startPt.x);
-line.setAttribute("y1",startPt.y);
-line.setAttribute("x2",p.x);
-line.setAttribute("y2",p.y);
-line.setAttribute("stroke",colorPicker.value);
-line.setAttribute("stroke-width",5);
-
-attachItemEvents(line);
-drawGroup.appendChild(line);
-saveToStorage();
-};
-
-/* -------- Text -------- */
-function addText(val,x,y){
-const t=document.createElementNS(
-"http://www.w3.org/2000/svg","text");
-t.setAttribute("x",x);
-t.setAttribute("y",y);
-t.setAttribute("fill",colorPicker.value);
-t.setAttribute("font-size","24");
-t.textContent=val;
-
-attachItemEvents(t);
-drawGroup.appendChild(t);
-saveToStorage();
-}
-
-/* -------- Delete -------- */
-function attachItemEvents(el){
-el.onclick=()=>{
-if(tool==='delete'){
-el.remove();
-saveToStorage();
-}
-};
-}
-
-/* -------- Save -------- */
-function saveToStorage(){
-roomData[currentRoom].svg = drawGroup.innerHTML;
-
-localStorage.setItem(
-'offline_room_data',
-JSON.stringify(roomData)
-);
-
-db.collection("rooms")
-.doc(currentRoom)
-.set({
-svg: drawGroup.innerHTML,
-updated: Date.now()
+    line.setAttribute("x2",p.x);
+    line.setAttribute("y2",p.y);
 });
+
+svg.addEventListener("pointerup", ()=>{
+    if(drawing){
+        drawing = false;
+        saveToCloud();
+    }
+});
+
+// ---------- Cloud Save ----------
+function saveToCloud(){
+    db.collection("rooms").doc("main").set({
+        svg: drawGroup.innerHTML,
+        updated: Date.now()
+    });
 }
 
-/* -------- Zoom -------- */
-function zoomView(d){
-scale=Math.max(0.3,Math.min(4,scale+d));
-workspace.style.transform=`scale(${scale})`;
+// ---------- Cloud Load ----------
+function loadFromCloud(){
+    db.collection("rooms").doc("main")
+    .onSnapshot(doc=>{
+        if(doc.exists){
+            drawGroup.innerHTML = doc.data().svg || "";
+            attachEvents();
+        }
+    });
 }
 
-/* -------- Undo -------- */
-function undo(){
-if(drawGroup.lastChild){
-drawGroup.removeChild(drawGroup.lastChild);
-saveToStorage();
-}
+// ---------- Reattach events ----------
+function attachEvents(){
+    drawGroup.querySelectorAll("line,text")
+    .forEach(el=>{
+        el.addEventListener("click",e=>{
+            e.stopPropagation();
+            selectElement(el);
+        });
+    });
 }
 
-window.onload=()=>{
-loadPDF();
-switchRoom('TR');
-};
+loadFromCloud();
+
 </script>
-
 </body>
 </html>
