@@ -11,7 +11,6 @@
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 
 <style>
 :root { --primary:#007bff; --tr:#dc3545; --dark:#121212; --gray:#2a2a2a; }
@@ -37,7 +36,7 @@ display:flex;justify-content:space-between;align-items:center;
 
 #viewport{flex:1;overflow:auto;position:relative;background:#333;}
 #workspace{position:relative;transform-origin:0 0;background:white;}
-#svg-layer{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;}
+#svg-layer{position:absolute;top:0;left:0;width:100%;height:100%;}
 canvas{display:block;}
 
 .zoom-ctrl{position:fixed;right:15px;bottom:120px;display:flex;flex-direction:column;gap:12px;}
@@ -100,7 +99,7 @@ display:flex;align-items:center;justify-content:center;font-size:20px;
 </nav>
 
 <script>
-/* ---------- FIREBASE CONFIG ---------- */
+/* Firebase */
 const firebaseConfig = {
   apiKey: "AIzaSyBdiUNdzPgK67dfJC_FKR2dmT2NO3sKdmo",
   authDomain: "project-e3d2941a-89ae-42ac-b6f.firebaseapp.com",
@@ -110,21 +109,28 @@ const firebaseConfig = {
   appId: "1:780017280635:web:f93c7b1ed903a1b512a4de",
   measurementId: "G-EY8NT27XX3"
 };
-
 firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-/* ------------------------------------ */
 
+/* PDF worker */
 pdfjsLib.GlobalWorkerOptions.workerSrc =
 "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 const LOCAL_PDF_PATH = encodeURIComponent("LV room.pdf");
 
+/* variables */
 let currentRoom='TR';
 let tool='pan';
 let scale=1.0;
 let isDrawing=false;
 let startPt={x:0,y:0};
+let appLoaded=false;
+
+const svgLayer=document.getElementById('svg-layer');
+const drawGroup=document.getElementById('draw-group');
+const previewLine=document.getElementById('preview-line');
+const workspace=document.getElementById('workspace');
+const roomDisplay=document.getElementById('room-display');
+const colorPicker=document.getElementById('colorPicker');
 
 let roomData = JSON.parse(localStorage.getItem('offline_room_data')) || {
 TR:{name:'TRANSFER ROOM',svg:''},
@@ -133,19 +139,26 @@ RMU:{name:'RMU ROOM',svg:''}
 };
 
 function switchRoom(id){
-roomData[currentRoom].svg=drawGroup.innerHTML;
+if(appLoaded){
+roomData[currentRoom].svg = drawGroup.innerHTML;
+localStorage.setItem('offline_room_data', JSON.stringify(roomData));
+}
+
 currentRoom=id;
 
-document.querySelectorAll('.room-tab').forEach(t=>t.classList.remove('active'));
-document.querySelector(`[data-room="${id}"]`).classList.add('active');
+document.querySelectorAll('.room-tab')
+.forEach(t=>t.classList.remove('active'));
+document.querySelector(`[data-room="${id}"]`)
+.classList.add('active');
 
 roomDisplay.innerText=roomData[id].name;
-drawGroup.innerHTML=roomData[id].svg||'';
+drawGroup.innerHTML=roomData[id].svg || '';
+
 setTool('pan');
+appLoaded=true;
 }
 
 async function loadPDF(){
-try{
 const pdf=await pdfjsLib.getDocument(LOCAL_PDF_PATH).promise;
 const page=await pdf.getPage(1);
 const viewport=page.getViewport({scale:2.5});
@@ -160,9 +173,6 @@ workspace.style.width=viewport.width+'px';
 workspace.style.height=viewport.height+'px';
 
 await page.render({canvasContext:ctx,viewport}).promise;
-}catch(e){
-alert("Upload LV room.pdf to GitHub.");
-}
 }
 
 function setTool(t){
@@ -173,18 +183,8 @@ document.getElementById('btn-'+tool).classList.add('active');
 
 function getCoords(e){
 const rect=svgLayer.getBoundingClientRect();
-return{
-x:(e.clientX-rect.left)/scale,
-y:(e.clientY-rect.top)/scale
-};
+return {x:(e.clientX-rect.left)/scale,y:(e.clientY-rect.top)/scale};
 }
-
-const svgLayer=document.getElementById('svg-layer');
-const drawGroup=document.getElementById('draw-group');
-const previewLine=document.getElementById('preview-line');
-const workspace=document.getElementById('workspace');
-const roomDisplay=document.getElementById('room-display');
-const colorPicker=document.getElementById('colorPicker');
 
 svgLayer.onpointerdown=e=>{
 if(tool==='delete')return;
