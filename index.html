@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Mobile Site Manager</title>
+    <title>Mobile Site Manager - Fixed Local</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         :root { --primary: #007bff; --tr: #dc3545; --dark: #121212; --gray: #2a2a2a; }
@@ -15,43 +15,23 @@
             height: 100vh; display: flex; flex-direction: column; overflow: hidden; 
         }
 
-        /* Top Room Navigation - Larger Tabs for Mobile */
-        .room-nav { 
-            display: flex; background: #000; padding: 8px; gap: 8px; 
-            border-bottom: 2px solid #333; 
-        }
+        .room-nav { display: flex; background: #000; padding: 8px; gap: 8px; border-bottom: 2px solid #333; }
         .room-tab {
             flex: 1; padding: 15px 5px; text-align: center;
             font-size: 12px; font-weight: 800; border-radius: 8px; cursor: pointer;
             background: var(--gray); border: 1px solid #444; color: #888;
-            line-height: 1.2;
         }
         .room-tab.active { background: var(--tr); color: white; border-color: #fff; }
 
-        /* Secondary Nav - Color Picker & Room Label */
-        .top-bar { 
-            padding: 10px 15px; background: var(--dark); 
-            display: flex; justify-content: space-between; align-items: center; 
-        }
-        .room-label { font-size: 14px; font-weight: bold; letter-spacing: 1px; color: #eee; }
+        .top-bar { padding: 10px 15px; background: var(--dark); display: flex; justify-content: space-between; align-items: center; }
+        .room-label { font-size: 14px; font-weight: bold; color: #eee; }
 
-        /* Drawing Area */
-        #viewport { 
-            flex: 1; overflow: auto; position: relative; background: #333;
-            display: flex; align-items: flex-start; justify-content: flex-start;
-        }
+        #viewport { flex: 1; overflow: auto; position: relative; background: #333; }
         #workspace { position: relative; transform-origin: 0 0; background: white; }
-        #svg-layer { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            touch-action: none; z-index: 10; 
-        }
+        #svg-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; z-index: 10; }
         canvas { display: block; }
 
-        /* Mobile Zoom Controls (Floating) */
-        .zoom-ctrl { 
-            position: fixed; right: 15px; bottom: 120px; 
-            display: flex; flex-direction: column; gap: 12px; z-index: 30; 
-        }
+        .zoom-ctrl { position: fixed; right: 15px; bottom: 120px; display: flex; flex-direction: column; gap: 12px; z-index: 30; }
         .float-btn {
             width: 55px; height: 55px; border-radius: 50%; border: none; 
             background: rgba(0,0,0,0.85); color: white; font-size: 28px; 
@@ -59,7 +39,6 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.6); border: 1px solid #444;
         }
 
-        /* Bottom Tool Navigation - Easy Thumb Access */
         .bottom-nav { 
             background: var(--dark); display: grid; grid-template-columns: repeat(5, 1fr); 
             padding: 10px 5px 30px 5px; border-top: 1px solid #333; z-index: 40;
@@ -72,10 +51,9 @@
         .icon-box { 
             width: 50px; height: 45px; border-radius: 12px; 
             background: var(--gray); display: flex; align-items: center; 
-            justify-content: center; font-size: 20px; transition: 0.2s;
+            justify-content: center; font-size: 20px;
         }
-        .nav-btn.active .icon-box { background: var(--primary); color: white; transform: scale(1.1); }
-        .nav-btn.active { color: white; }
+        .nav-btn.active .icon-box { background: var(--primary); color: white; }
     </style>
 </head>
 <body>
@@ -117,9 +95,8 @@
 <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
-    // Your Permanent URL through Proxy
-    const FILE_ID = "1e4UvyV0AXvEdND-_o5nF9pccnr9AM564";
-    const PERMANENT_URL = "https://corsproxy.io/?" + encodeURIComponent(`https://docs.google.com/uc?export=download&id=${FILE_ID}`);
+    // URL encoded to handle the space correctly
+    const LOCAL_PDF_PATH = encodeURIComponent("LV room.pdf"); 
 
     let currentRoom = 'TR';
     let tool = 'pan';
@@ -127,9 +104,9 @@
     let isDrawing = false;
     let startPt = { x: 0, y: 0 };
 
-    let roomData = JSON.parse(localStorage.getItem('mobile_room_data')) || {
+    let roomData = JSON.parse(localStorage.getItem('offline_room_data')) || {
         'TR': { name: 'TRANSFER ROOM', svg: '' },
-        'LV': { name: 'LV ROOM', svg: '' },
+        'LV': { name: 'LV room', svg: '' },
         'RMU': { name: 'RMU ROOM', svg: '' }
     };
 
@@ -140,18 +117,20 @@
         document.querySelector(`[data-room="${id}"]`).classList.add('active');
         document.getElementById('room-display').innerText = roomData[id].name;
         document.getElementById('draw-group').innerHTML = roomData[id].svg || '';
-        
         Array.from(document.getElementById('draw-group').children).forEach(attachItemEvents);
         setTool('pan');
     }
 
     async function loadPDF() {
         try {
-            const loadingTask = pdfjsLib.getDocument(PERMANENT_URL);
+            // Check if file exists by fetching first
+            const check = await fetch(LOCAL_PDF_PATH);
+            if(!check.ok) throw new Error("File not found");
+
+            const loadingTask = pdfjsLib.getDocument(LOCAL_PDF_PATH);
             const pdf = await loadingTask.promise;
             const page = await pdf.getPage(1);
             
-            // Render at high resolution for clear mobile viewing
             const viewport = page.getViewport({scale: 2.5});
             const canvas = document.getElementById('pdf-canvas');
             const ctx = canvas.getContext('2d');
@@ -163,7 +142,8 @@
 
             await page.render({canvasContext: ctx, viewport: viewport}).promise;
         } catch (e) {
-            alert("Connection error. Please refresh or check file sharing.");
+            console.error(e);
+            alert("Connection error: Make sure 'LV room.pdf' is uploaded to GitHub and named exactly the same.");
         }
     }
 
@@ -171,24 +151,17 @@
         tool = (tool === t && t !== 'pan') ? 'pan' : t;
         document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
         document.getElementById('btn-' + tool).classList.add('active');
-        
-        // Disable scrolling the viewport when drawing
         document.getElementById('svg-layer').style.pointerEvents = (tool === 'pan') ? 'none' : 'auto';
         document.getElementById('viewport').style.overflow = (tool === 'pan') ? 'auto' : 'hidden';
     }
 
     function getCoords(e) {
         const rect = document.getElementById('svg-layer').getBoundingClientRect();
-        // Handle both touch and mouse
         const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
         const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
-        return { 
-            x: (clientX - rect.left) / scale, 
-            y: (clientY - rect.top) / scale 
-        };
+        return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
     }
 
-    // Pointer events handle both Mouse and Touch natively
     const svg = document.getElementById('svg-layer');
     svg.onpointerdown = (e) => {
         if (tool === 'pan' || tool === 'delete') return;
@@ -218,7 +191,6 @@
         isDrawing = false;
         document.getElementById('preview-line').style.display = 'none';
         const p = getCoords(e);
-        
         if (Math.hypot(p.x - startPt.x, p.y - startPt.y) > 3) {
             const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
             line.setAttribute("x1", startPt.x); line.setAttribute("y1", startPt.y);
@@ -258,7 +230,7 @@
 
     function saveToStorage() {
         roomData[currentRoom].svg = document.getElementById('draw-group').innerHTML;
-        localStorage.setItem('mobile_room_data', JSON.stringify(roomData));
+        localStorage.setItem('offline_room_data', JSON.stringify(roomData));
     }
 
     window.onload = () => {
